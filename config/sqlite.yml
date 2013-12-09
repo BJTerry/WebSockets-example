@@ -1,0 +1,20 @@
+Default: &defaults
+  database: WebSockets-example.sqlite3
+  poolsize: 10
+
+Development:
+  <<: *defaults
+
+Testing:
+  database: WebSockets-example_test.sqlite3
+  <<: *defaults
+
+Staging:
+  database: WebSockets-example_staging.sqlite3
+  poolsize: 100
+  <<: *defaults
+
+Production:
+  database: WebSockets-example_production.sqlite3
+  poolsize: 100
+  <<: *defaults
