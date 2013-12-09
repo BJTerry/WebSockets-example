@@ -1,1 +1,14 @@
 document.getElementById(#{toJSON aDomId}).innerHTML = "This text was added by the Javascript part of the homepage widget.";
+
+var ws = new WebSocket("@{HomeR}".replace("http", "ws"));
+ws.onmessage = function(e){
+    var p = document.getElementById("wsOutput");
+    p.innerText = p.innerText + e.data + "\n";
+};
+document.getElementById("wsForm").onsubmit = function(e){
+    var t = e.target.wsText.value;
+    ws.send(t);
+    e.preventDefault();
+};
+
+    

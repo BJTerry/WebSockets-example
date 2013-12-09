@@ -3,13 +3,13 @@ module Application
     ( makeApplication
     , getApplicationDev
     , makeFoundation
+    , webSocketMain -- WebSocket: Export WebSocket handler
     ) where
 
 import Import
 import Settings
 import Yesod.Auth
 import Yesod.Default.Config
-import Yesod.Default.Main
 import Yesod.Default.Handlers
 import Network.Wai.Middleware.RequestLogger
 import qualified Database.Persist
@@ -18,6 +18,16 @@ import Network.HTTP.Conduit (newManager, def)
 import Control.Monad.Logger (runLoggingT)
 import System.IO (stdout)
 import System.Log.FastLogger (mkLogger)
+
+-- WebSocket: New imports
+import AppWebSocket (runSocket, webSocketHandler)
+import qualified Network.WebSockets as WS
+import Control.Concurrent.MVar
+import System.Environment (getEnvironment)
+import Data.Maybe (fromMaybe)
+import Safe (readMay)
+import qualified Data.Map.Strict as Map
+
 
 -- Import all relevant handler modules here.
 -- Don't forget to add new modules to your cabal file!
@@ -32,7 +42,7 @@ mkYesodDispatch "App" resourcesApp
 -- performs initialization and creates a WAI application. This is also the
 -- place to put your migrate statements to have automatic database
 -- migrations handled by Yesod.
-makeApplication :: AppConfig DefaultEnv Extra -> IO Application
+makeApplication :: AppConfig DefaultEnv Extra -> IO (Application, App)
 makeApplication conf = do
     foundation <- makeFoundation conf
 
@@ -47,7 +57,8 @@ makeApplication conf = do
 
     -- Create the WAI application and apply middlewares
     app <- toWaiAppPlain foundation
-    return $ logWare app
+    -- WebSocket: Need to return App
+    return $ (logWare app, foundation)
 
 -- | Loads up any necessary settings, creates your foundation datatype, and
 -- performs some initialization.
@@ -60,7 +71,10 @@ makeFoundation conf = do
               Database.Persist.applyEnv
     p <- Database.Persist.createPoolConfig (dbconf :: Settings.PersistConf)
     logger <- mkLogger True stdout
-    let foundation = App conf s p manager dbconf logger
+    sessionBackend <- makeAppSessionBackend    
+    -- WebSocket: This mvar will hold a Map of the active WebSocket connections
+    mvar <- newMVar Map.empty
+    let foundation = App conf s p manager dbconf logger sessionBackend mvar
 
     -- Perform database migration using our application's logging settings.
     runLoggingT
@@ -68,12 +82,36 @@ makeFoundation conf = do
         (messageLoggerSource foundation logger)
 
     return foundation
+    
 
 -- for yesod devel
-getApplicationDev :: IO (Int, Application)
+-- WebSocket: Changed to return Appl so it's available in main
+getApplicationDev :: IO (Int, Application, App)
 getApplicationDev =
-    defaultDevelApp loader makeApplication
+    wsDevelApp loader makeApplication
   where
     loader = Yesod.Default.Config.loadConfig (configSettings Development)
         { csParseExtra = parseExtra
         }
+
+-- WebSocket: To thread App into main, we have to change defaultDevelApp
+wsDevelApp
+    :: (Show env, Read env)
+    => IO (AppConfig env extra) -- ^ A means to load your development @'AppConfig'@
+    -> (AppConfig env extra -> IO (Application, App)) -- ^ Get your @Application@
+    -> IO (Int, Application, App)
+wsDevelApp load getApp = do
+    conf   <- load
+    env <- getEnvironment
+    let p = fromMaybe (appPort conf) $ lookup "PORT" env >>= readMay
+        pdisplay = fromMaybe p $ lookup "DISPLAY_PORT" env >>= readMay
+    putStrLn $ "Devel application launched: http://localhost:" ++ show pdisplay
+    (app, foundation) <- getApp conf
+    return (p, app, foundation)
+
+
+-- | WebSocket: The main ServerApp for WebSocket connections
+webSocketMain :: App -> WS.ServerApp
+webSocketMain app pc = runSocket app pc webSocketHandler
+
+

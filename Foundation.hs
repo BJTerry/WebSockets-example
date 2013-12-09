@@ -20,6 +20,13 @@ import Text.Jasmine (minifym)
 import Text.Hamlet (hamletFile)
 import System.Log.FastLogger (Logger)
 
+-- WebSocket: New imports
+import qualified Network.WebSockets as WS
+import Data.Map (Map)
+import Control.Concurrent.MVar
+import Yesod.Auth.Dummy
+
+
 -- | The site argument for your application. This can be a good place to
 -- keep settings and values requiring initialization before your application
 -- starts running, such as database connections. Every handler will have
@@ -31,6 +38,8 @@ data App = App
     , httpManager :: Manager
     , persistConfig :: Settings.PersistConf
     , appLogger :: Logger
+    , appSessionBackend :: SessionBackend -- ^ WebSocket: Need SessionBackend available to process cookies in WebSocket handler
+    , appConnections :: MVar (Map UserId WS.Connection) -- ^ WebSocket: An MVar holding a Data.Map of the active WebSocket connections
     }
 
 -- Set up i18n messages. See the message folder.
@@ -66,9 +75,7 @@ instance Yesod App where
 
     -- Store session data on the client in encrypted cookies,
     -- default session idle timeout is 120 minutes
-    makeSessionBackend _ = fmap Just $ defaultClientSessionBackend
-        (120 * 60) -- 120 minutes
-        "config/client_session_key.aes"
+    makeSessionBackend site = return $ Just $ appSessionBackend site -- WebSocket: Use SessionBackend from App
 
     defaultLayout widget = do
         master <- getYesod
@@ -119,6 +126,11 @@ instance Yesod App where
 
     makeLogger = return . appLogger
 
+-- | WebSocket: Pulled out so that we can initialize the SessionBackend while creating App instance 
+makeAppSessionBackend = defaultClientSessionBackend
+  (120 * 60) -- 120 minutes
+  "config/client_session_key.aes" 
+
 -- How to run database actions.
 instance YesodPersist App where
     type YesodPersistBackend App = SqlPersistT
@@ -142,7 +154,7 @@ instance YesodAuth App where
                 fmap Just $ insert $ User (credsIdent creds) Nothing
 
     -- You can add other plugins like BrowserID, email or OAuth here
-    authPlugins _ = [authBrowserId def, authGoogleEmail]
+    authPlugins _ = [authBrowserId def, authGoogleEmail, authDummy] -- WebSocket: Added dummy authentication for example
 
     authHttpManager = httpManager
 
